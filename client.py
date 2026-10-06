@@ -30,7 +30,7 @@ def hexdump(data):
     for i in range(
         0,
         len(data),
-        16
+        16,
     ):
 
         chunk = data[i:i + 16]
@@ -41,13 +41,14 @@ def hexdump(data):
         )
 
         print(
-            f"{i:08x}  {hex_values}"
+            f"{i:08x}  {hex_values}",
+            file=sys.stderr,
         )
 
 
-def send_get(sock, path):
+def send_get(sock, path, verbose=False):
 
-    payload = path.encode()
+    payload = path.encode("utf-8")
 
     frame = struct.pack(
         REQUEST_HEADER_FORMAT,
@@ -55,21 +56,24 @@ def send_get(sock, path):
         FRAME_GET,
         0,
         0,
-        len(payload)
+        len(payload),
     )
 
-    print("\nREQUEST FRAME\n")
+    if verbose:
 
-    hexdump(
-        frame + payload
-    )
+        print(
+            "\nREQUEST FRAME\n",
+            file=sys.stderr,
+        )
+
+        hexdump(frame + payload)
 
     sock.sendall(frame)
     sock.sendall(payload)
 
     response_header = recv_exact(
         sock,
-        RESPONSE_HEADER_SIZE
+        RESPONSE_HEADER_SIZE,
     )
 
     (
@@ -77,37 +81,46 @@ def send_get(sock, path):
         frame_type,
         status,
         header_len,
-        body_len
+        body_len,
     ) = struct.unpack(
         RESPONSE_HEADER_FORMAT,
-        response_header
+        response_header,
     )
 
     headers = recv_exact(
         sock,
-        header_len
+        header_len,
     )
 
     body = recv_exact(
         sock,
-        body_len
+        body_len,
     )
 
-    print("\nRESPONSE FRAME\n")
+    if verbose:
 
-    hexdump(
-        response_header +
-        headers +
-        body
-    )
-
-    print("\nSTATUS:", status)
-
-    if body:
         print(
-            body.decode(
-                errors="ignore"
-            )
+            "\nRESPONSE FRAME\n",
+            file=sys.stderr,
+        )
+
+        hexdump(
+            response_header +
+            headers +
+            body
+        )
+
+    print(
+        f"\nSTATUS: {status}"
+    )
+
+    try:
+        print(
+            body.decode("utf-8")
+        )
+    except UnicodeDecodeError:
+        print(
+            "<binary content>"
         )
 
     return status
@@ -115,18 +128,20 @@ def send_get(sock, path):
 
 def main():
 
+    verbose = "-v" in sys.argv
+
     sock = socket.socket(
         socket.AF_INET,
-        socket.SOCK_STREAM
+        socket.SOCK_STREAM,
     )
 
     sock.connect(
         ("localhost", 9000)
     )
 
-    print(
-        "Connected."
-    )
+    print("Connected.")
+
+    exit_code = 0
 
     while True:
 
@@ -139,15 +154,16 @@ def main():
 
         status = send_get(
             sock,
-            path
+            path,
+            verbose,
         )
 
         if status >= 400:
-            print(
-                "Server returned error."
-            )
+            exit_code = 1
 
     sock.close()
+
+    sys.exit(exit_code)
 
 
 if __name__ == "__main__":

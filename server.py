@@ -2,12 +2,13 @@ import os
 import socket
 import struct
 import mimetypes
+import sys
 
 from protocol import *
 
 HOST = "0.0.0.0"
 PORT = 9000
-ROOT = os.path.abspath("./www")
+ROOT = os.path.realpath("./www")
 
 
 def recv_exact(conn, size):
@@ -16,9 +17,7 @@ def recv_exact(conn, size):
 
     while len(data) < size:
 
-        chunk = conn.recv(
-            size - len(data)
-        )
+        chunk = conn.recv(size - len(data))
 
         if not chunk:
             return None
@@ -28,14 +27,9 @@ def recv_exact(conn, size):
     return data
 
 
-def send_response(
-    conn,
-    status,
-    headers,
-    body
-):
+def send_response(conn, status, headers, body):
 
-    header_bytes = headers.encode()
+    header_bytes = headers.encode("utf-8")
 
     frame = struct.pack(
         RESPONSE_HEADER_FORMAT,
@@ -43,7 +37,7 @@ def send_response(
         FRAME_RESPONSE,
         status,
         len(header_bytes),
-        len(body)
+        len(body),
     )
 
     conn.sendall(frame)
@@ -51,28 +45,47 @@ def send_response(
     conn.sendall(body)
 
 
-def build_file_response(path):
+def safe_path(path):
 
     requested = path.lstrip("/")
 
-    full_path = os.path.abspath(
+    full_path = os.path.realpath(
         os.path.join(ROOT, requested)
     )
 
-    if not full_path.startswith(ROOT):
+    try:
+        return (
+            os.path.commonpath(
+                [ROOT, full_path]
+            )
+            == ROOT
+        )
+    except ValueError:
+        return False
+
+
+def build_file_response(path):
+
+    if not safe_path(path):
 
         return (
             STATUS_BAD_REQUEST,
             "Content-Type:text/plain",
-            b"Invalid Path"
+            b"Invalid Path",
         )
 
-    if not os.path.exists(full_path):
+    requested = path.lstrip("/")
+
+    full_path = os.path.realpath(
+        os.path.join(ROOT, requested)
+    )
+
+    if not os.path.isfile(full_path):
 
         return (
             STATUS_NOT_FOUND,
             "Content-Type:text/plain",
-            b"File Not Found"
+            b"File Not Found",
         )
 
     with open(full_path, "rb") as f:
@@ -83,14 +96,12 @@ def build_file_response(path):
         or "application/octet-stream"
     )
 
-    headers = (
-        f"Content-Type:{content_type}"
-    )
+    headers = f"Content-Type:{content_type}"
 
     return (
         STATUS_OK,
         headers,
-        body
+        body,
     )
 
 
@@ -98,7 +109,7 @@ def handle_frame(conn):
 
     header = recv_exact(
         conn,
-        REQUEST_HEADER_SIZE
+        REQUEST_HEADER_SIZE,
     )
 
     if not header:
@@ -109,26 +120,31 @@ def handle_frame(conn):
         frame_type,
         flags,
         reserved,
-        payload_length
+        payload_length,
     ) = struct.unpack(
         REQUEST_HEADER_FORMAT,
-        header
+        header,
     )
 
-    if payload_length > 1024:
+    if payload_length > MAX_PAYLOAD_SIZE:
+
+        payload = recv_exact(
+            conn,
+            payload_length,
+        )
 
         send_response(
             conn,
             STATUS_BAD_REQUEST,
             "",
-            b"Payload Too Large"
+            b"Payload Too Large",
         )
 
         return True
 
     payload = recv_exact(
         conn,
-        payload_length
+        payload_length,
     )
 
     if payload is None:
@@ -140,12 +156,20 @@ def handle_frame(conn):
             conn,
             STATUS_BAD_REQUEST,
             "",
-            b"Unsupported Version"
+            b"Unsupported Version",
         )
 
         return True
 
     if frame_type == FRAME_PING:
+
+        send_response(
+            conn,
+            STATUS_OK,
+            "",
+            b"PONG",
+        )
+
         return True
 
     if frame_type != FRAME_GET:
@@ -168,7 +192,7 @@ def handle_frame(conn):
             conn,
             STATUS_BAD_REQUEST,
             "",
-            b"Bad UTF-8"
+            b"Bad UTF-8",
         )
 
         return True
@@ -181,7 +205,7 @@ def handle_frame(conn):
         conn,
         status,
         headers,
-        body
+        body,
     )
 
     return True
@@ -189,22 +213,28 @@ def handle_frame(conn):
 
 def main():
 
+    host = HOST
+    port = PORT
+
+    if len(sys.argv) >= 2:
+        port = int(sys.argv[1])
+
     server = socket.socket(
         socket.AF_INET,
-        socket.SOCK_STREAM
+        socket.SOCK_STREAM,
     )
 
     server.setsockopt(
         socket.SOL_SOCKET,
         socket.SO_REUSEADDR,
-        1
+        1,
     )
 
-    server.bind((HOST, PORT))
+    server.bind((host, port))
     server.listen()
 
     print(
-        f"BHTTP Server Listening on {PORT}"
+        f"BHTTP Server Listening on {port}"
     )
 
     while True:
